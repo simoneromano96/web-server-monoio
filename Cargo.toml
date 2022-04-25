@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 http = "0.2.6"
 monoio = { version = "0.0.4" }
+async-h1 = { version = "2.3.3" }
+httparse = { version = "1.7.0" }

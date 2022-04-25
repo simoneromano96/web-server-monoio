@@ -1,7 +1,4 @@
-/// A echo example.
-///
-/// Run the example and `nc 127.0.0.1 50002` in another shell.
-/// All your input will be echoed out.
+use httparse::Request;
 use monoio::io::{AsyncReadRent, AsyncWriteRentExt};
 use monoio::net::{TcpListener, TcpStream};
 
@@ -24,9 +21,26 @@ async fn main() {
     }
 }
 
+async fn test_handler(stream: TcpStream) -> std::io::Result<()> {
+    let response = b"HTTP/1.1 200 OK\r\n\r\n";
+    let (res, _) = stream.write_all(response.to_vec()).await;
+    res?;
+    Ok(())
+}
+
+async fn not_found_handler(stream: TcpStream) -> std::io::Result<()> {
+    let response = b"HTTP/1.1 404 NOT FOUND\r\n\r\n";
+    let (res, _) = stream.write_all(response.to_vec()).await;
+    res?;
+    Ok(())
+}
+
 async fn echo(stream: TcpStream) -> std::io::Result<()> {
-    let mut buffer: Vec<u8> = Vec::with_capacity(8 * 1024);
-    // loop {
+    let mut buffer = Vec::with_capacity(8 * 1024);
+
+    // let (read, write) = stream.split();
+    // let (res, _buf) = read.read(buffer).await;
+
     // read
     let (res, _buf) = stream.read(buffer).await;
     buffer = _buf;
@@ -36,14 +50,22 @@ async fn echo(stream: TcpStream) -> std::io::Result<()> {
         return Ok(());
     }
 
-    println!("Request: \n{}", String::from_utf8_lossy(&buffer[..]));
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    req.parse(&buffer).unwrap();
 
-    // write all
-    let response = b"HTTP/1.1 200 OK\r\n\r\n";
-
-    let (res, _buf) = stream.write_all(response.to_vec()).await;
-    buffer = _buf;
-    res?;
+    match req {
+        Request {
+            method: Some("GET"),
+            path: Some("/test"),
+            ..
+        } => {
+            test_handler(stream).await?;
+        }
+        _ => {
+            not_found_handler(stream).await?;
+        }
+    }
 
     // clear
     buffer.clear();
