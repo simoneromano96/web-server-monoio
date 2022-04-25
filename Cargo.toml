@@ -6,7 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-http = "0.2.6"
+# http = "0.2.6"
 monoio = { version = "0.0.4" }
-async-h1 = { version = "2.3.3" }
+# async-h1 = { version = "2.3.3" }
 httparse = { version = "1.7.0" }
+http-types = "2.12.0"
+# Benchmark all these
+fnv = "1.0.7"
+fxhash = "0.2.1"
+indexmap = "1.8.1"
