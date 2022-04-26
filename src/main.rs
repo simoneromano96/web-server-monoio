@@ -4,26 +4,30 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
+use futures_util::future::BoxFuture;
 use httparse::Request;
 use monoio::io::{AsyncReadRent, AsyncWriteRentExt};
 use monoio::net::{TcpListener, TcpStream};
 
-type AsyncHandler<'a> = impl Future<Output = std::io::Result<()>> + 'a;
+// type AsyncHandler = Box<dyn Fn(monoio::net::TcpStream) -> BoxFuture<'static, std::io::Result<()>>>;
+type AsyncHandler = fn(monoio::net::TcpStream) -> dyn Future<Output = std::io::Result<()>>;
+// BoxFuture<'static, std::io::Result<()>>;
+//  Box<dyn Fn(TcpStream) -> dyn Future<Output = std::io::Result<()>>>;
 
-type PathHandler<'a> = HashMap<String, AsyncHandler<'a>>;
+type PathHandler = HashMap<String, AsyncHandler>;
 
 #[derive(Default)]
-struct Router<'a> {
-    routes: HashMap<String, PathHandler<'a>>,
+struct Router {
+    routes: HashMap<String, PathHandler>,
 }
 
-impl<'a> Router<'a> {
+impl Router {
     pub fn add(
         &mut self,
         method: &str,
         path: &str,
         // Pin<Box<dyn Future<Output=()> + 'a>>
-        handler: AsyncHandler<'a>,
+        handler: AsyncHandler,
     ) {
         match self.routes.get_mut(method) {
             Some(path_map) => {
@@ -38,10 +42,31 @@ impl<'a> Router<'a> {
     }
 }
 
+// fn by_length() -> impl Fn(TcpStream) -> Pin<Box<dyn Future<Output = std::io::Result<()>>>> {
+//     move |stream| {
+//         Box::pin(async move {
+//             let response = b"HTTP/1.1 200 OK\r\n\r\n";
+//             let (res, _) = stream.write_all(response.to_vec()).await;
+//             res?;
+//             Ok(())
+//         })
+//     }
+// }
+
 #[monoio::main]
 async fn main() {
     let listener = TcpListener::bind("0.0.0.0:3000").unwrap();
     let mut router = Router::default();
+
+    fn add(x: i32, y: i32) -> i32 {
+        x + y
+    }
+
+    let mut x = add(5, 7);
+
+    type Binop = fn(i32, i32) -> i32;
+    let bo: Binop = add;
+    x = bo(5, 7);
 
     println!("listening");
     loop {
@@ -49,7 +74,8 @@ async fn main() {
         match incoming {
             Ok((stream, addr)) => {
                 println!("accepted a connection from {}", addr);
-                router.add("GET", "/test", test_handler);
+                // let handler = Box::new(test_handler);
+                // router.add("GET", "/test", by_length);
 
                 monoio::spawn(echo(stream));
             }
