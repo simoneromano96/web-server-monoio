@@ -4,30 +4,36 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use futures_util::future::BoxFuture;
+// use futures_util::future::BoxFuture;
+use futures_util::FutureExt;
 use httparse::Request;
 use monoio::io::{AsyncReadRent, AsyncWriteRentExt};
 use monoio::net::{TcpListener, TcpStream};
 
 // type AsyncHandler = Box<dyn Fn(monoio::net::TcpStream) -> BoxFuture<'static, std::io::Result<()>>>;
-type AsyncHandler = fn(monoio::net::TcpStream) -> dyn Future<Output = std::io::Result<()>>;
+// type AsyncHandler = fn(monoio::net::TcpStream) -> dyn Future<Output = std::io::Result<()>>;
 // BoxFuture<'static, std::io::Result<()>>;
 //  Box<dyn Fn(TcpStream) -> dyn Future<Output = std::io::Result<()>>>;
+type SyncHandler = fn(monoio::net::TcpStream) -> std::io::Result<()>;
+// type AsyncHandler<F> = F;
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
-type PathHandler = HashMap<String, AsyncHandler>;
+type AsyncHandler<'a> = impl Fn(monoio::net::TcpStream) -> BoxFuture<'a, std::io::Result<()>>;
+
+type PathHandler<'a> = HashMap<String, AsyncHandler<'a>>;
 
 #[derive(Default)]
-struct Router {
-    routes: HashMap<String, PathHandler>,
+struct Router<'a> {
+    routes: HashMap<String, PathHandler<'a>>,
 }
 
-impl Router {
+impl<'a> Router<'a> {
     pub fn add(
         &mut self,
         method: &str,
         path: &str,
         // Pin<Box<dyn Future<Output=()> + 'a>>
-        handler: AsyncHandler,
+        handler: AsyncHandler<'a>,
     ) {
         match self.routes.get_mut(method) {
             Some(path_map) => {
@@ -56,7 +62,7 @@ impl Router {
 #[monoio::main]
 async fn main() {
     let listener = TcpListener::bind("0.0.0.0:3000").unwrap();
-    let mut router = Router::default();
+    let router = Router::default();
 
     fn add(x: i32, y: i32) -> i32 {
         x + y
@@ -76,6 +82,8 @@ async fn main() {
                 println!("accepted a connection from {}", addr);
                 // let handler = Box::new(test_handler);
                 // router.add("GET", "/test", by_length);
+                let h: SyncHandler = sync_handler;
+                let h2: AsyncHandler = |stream| Box::pin(test_handler(stream));
 
                 monoio::spawn(echo(stream));
             }
@@ -85,6 +93,35 @@ async fn main() {
             }
         }
     }
+}
+
+fn sync_handler(stream: TcpStream) -> std::io::Result<()> {
+    Ok(())
+}
+
+async fn run_another_async_fn<F>(f: F)
+where
+    for<'a> F: FnOnce(&'a mut i32) -> BoxFuture<'a, ()>,
+{
+    let mut i = 42;
+    println!("running function");
+
+    f(&mut i).await;
+
+    println!("ran function");
+}
+
+fn asd(i: &mut i32) -> BoxFuture<'_, ()> {
+    foo(i).boxed()
+}
+
+async fn foo<'a>(i: &'a mut i32) {
+    // no-op
+}
+
+async fn bar() {
+    run_another_async_fn(asd);
+    run_another_async_fn(|i| foo(i).boxed());
 }
 
 async fn test_handler(stream: TcpStream) -> std::io::Result<()> {
