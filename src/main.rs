@@ -1,39 +1,39 @@
 #![feature(type_alias_impl_trait)]
 #![feature(async_closure)]
+use httparse::Request;
+use monoio::{
+    io::{AsyncReadRent, AsyncWriteRentExt},
+    net::{tcp::TcpWriteHalf, TcpListener, TcpStream},
+};
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-// use futures_util::future::BoxFuture;
-use futures_util::FutureExt;
-use httparse::Request;
-use monoio::io::{AsyncReadRent, AsyncWriteRentExt};
-use monoio::net::{TcpListener, TcpStream};
-
 // type AsyncHandler = Box<dyn Fn(monoio::net::TcpStream) -> BoxFuture<'static, std::io::Result<()>>>;
-// type AsyncHandler = fn(monoio::net::TcpStream) -> dyn Future<Output = std::io::Result<()>>;
+type AsyncHandler = fn(monoio::net::TcpStream) -> dyn Future<Output = std::io::Result<()>>;
 // BoxFuture<'static, std::io::Result<()>>;
 //  Box<dyn Fn(TcpStream) -> dyn Future<Output = std::io::Result<()>>>;
 type SyncHandler = fn(monoio::net::TcpStream) -> std::io::Result<()>;
 // type AsyncHandler<F> = F;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
-type AsyncHandler<'a> = impl Fn(monoio::net::TcpStream) -> BoxFuture<'a, std::io::Result<()>>;
+// type AsyncHandler<'a> = impl Fn(monoio::net::TcpStream) -> BoxFuture<'a, std::io::Result<()>>;
 
-type PathHandler<'a> = HashMap<String, AsyncHandler<'a>>;
+type PathHandler = HashMap<String, AsyncHandler>;
 
 #[derive(Default)]
-struct Router<'a> {
-    routes: HashMap<String, PathHandler<'a>>,
+struct Router {
+    routes: HashMap<String, PathHandler>,
 }
 
-impl<'a> Router<'a> {
+impl Router {
     pub fn add(
         &mut self,
         method: &str,
         path: &str,
         // Pin<Box<dyn Future<Output=()> + 'a>>
-        handler: AsyncHandler<'a>,
+        handler: AsyncHandler,
     ) {
         match self.routes.get_mut(method) {
             Some(path_map) => {
@@ -64,15 +64,13 @@ async fn main() {
     let listener = TcpListener::bind("0.0.0.0:3000").unwrap();
     let router = Router::default();
 
-    fn add(x: i32, y: i32) -> i32 {
-        x + y
-    }
-
-    let mut x = add(5, 7);
-
-    type Binop = fn(i32, i32) -> i32;
-    let bo: Binop = add;
-    x = bo(5, 7);
+    // fn add(x: i32, y: i32) -> i32 {
+    //     x + y
+    // }
+    // let mut x = add(5, 7);
+    // type Binop = fn(i32, i32) -> i32;
+    // let bo: Binop = add;
+    // x = bo(5, 7);
 
     println!("listening");
     loop {
@@ -82,10 +80,10 @@ async fn main() {
                 println!("accepted a connection from {}", addr);
                 // let handler = Box::new(test_handler);
                 // router.add("GET", "/test", by_length);
-                let h: SyncHandler = sync_handler;
-                let h2: AsyncHandler = |stream| Box::pin(test_handler(stream));
+                // let h: SyncHandler = sync_handler;
+                // let h2: AsyncHandler = |stream| Box::pin(test_handler(stream));
 
-                monoio::spawn(echo(stream));
+                monoio::spawn(handle_tcp(stream));
             }
             Err(e) => {
                 println!("accepted connection failed: {}", e);
@@ -95,83 +93,77 @@ async fn main() {
     }
 }
 
-fn sync_handler(stream: TcpStream) -> std::io::Result<()> {
-    Ok(())
-}
+// fn sync_handler(stream: TcpStream) -> std::io::Result<()> {
+//     Ok(())
+// }
+// async fn run_another_async_fn<F>(f: F)
+// where
+//     for<'a> F: FnOnce(&'a mut i32) -> BoxFuture<'a, ()>,
+// {
+//     let mut i = 42;
+//     println!("running function");
+//     f(&mut i).await;
+//     println!("ran function");
+// }
+// fn asd(i: &mut i32) -> BoxFuture<'_, ()> {
+//     foo(i).boxed()
+// }
+// async fn foo<'a>(i: &'a mut i32) {
+//     // no-op
+// }
+// async fn bar() {
+//     run_another_async_fn(asd);
+//     run_another_async_fn(|i| foo(i).boxed());
+// }
 
-async fn run_another_async_fn<F>(f: F)
-where
-    for<'a> F: FnOnce(&'a mut i32) -> BoxFuture<'a, ()>,
-{
-    let mut i = 42;
-    println!("running function");
-
-    f(&mut i).await;
-
-    println!("ran function");
-}
-
-fn asd(i: &mut i32) -> BoxFuture<'_, ()> {
-    foo(i).boxed()
-}
-
-async fn foo<'a>(i: &'a mut i32) {
-    // no-op
-}
-
-async fn bar() {
-    run_another_async_fn(asd);
-    run_another_async_fn(|i| foo(i).boxed());
-}
-
-async fn test_handler(stream: TcpStream) -> std::io::Result<()> {
+async fn test_handler(stream: TcpWriteHalf<'_>) -> std::io::Result<()> {
     let response = b"HTTP/1.1 200 OK\r\n\r\n";
     let (res, _) = stream.write_all(response.to_vec()).await;
     res?;
     Ok(())
 }
 
-async fn not_found_handler(stream: TcpStream) -> std::io::Result<()> {
+async fn not_found_handler(stream: TcpWriteHalf<'_>) -> std::io::Result<()> {
     let response = b"HTTP/1.1 404 NOT FOUND\r\n\r\n";
     let (res, _) = stream.write_all(response.to_vec()).await;
     res?;
     Ok(())
 }
 
-async fn echo(stream: TcpStream) -> std::io::Result<()> {
+async fn handle_tcp(mut stream: TcpStream) -> std::io::Result<()> {
     let mut buffer = Vec::with_capacity(8 * 1024);
 
-    // let (read, write) = stream.split();
-    // let (res, _buf) = read.read(buffer).await;
+    // Split stream into two components
+    let (read, write) = stream.split();
+    let (request, _buf) = read.read(buffer).await;
 
-    // read
-    let (res, _buf) = stream.read(buffer).await;
-    buffer = _buf;
-
-    let res: usize = res?;
+    // Empty request
+    let res: usize = request?;
     if res == 0 {
         return Ok(());
     }
 
+    // Move _buf into buffer for further inspection
+    buffer = _buf;
+    // Parse request
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
     req.parse(&buffer).unwrap();
+
+    println!("{}", String::from_utf8_lossy(&buffer));
+    println!("{:#?}", String::from_utf8_lossy(&buffer));
+    println!("{:#?}", (&buffer));
+
+    parse::parse_request(&buffer).await.unwrap();
 
     match req {
         Request {
             method: Some("GET"),
             path: Some("/test"),
             ..
-        } => {
-            test_handler(stream).await?;
-        }
-        _ => {
-            not_found_handler(stream).await?;
-        }
+        } => test_handler(write).await,
+        _ => not_found_handler(write).await,
     }
-
-    // clear
-    buffer.clear();
-    Ok(())
-    // }
 }
+
+mod parse;
