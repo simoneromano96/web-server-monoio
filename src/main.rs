@@ -150,9 +150,9 @@ async fn handle_tcp(mut stream: TcpStream) -> std::io::Result<()> {
     let mut req = httparse::Request::new(&mut headers);
     req.parse(&buffer).unwrap();
 
-    println!("{}", String::from_utf8_lossy(&buffer));
-    println!("{:#?}", String::from_utf8_lossy(&buffer));
-    println!("{:#?}", (&buffer));
+    // println!("{}", String::from_utf8_lossy(&buffer));
+    // println!("{:#?}", String::from_utf8_lossy(&buffer));
+    // println!("{:#?}", (&buffer));
 
     parse::parse_request(&buffer).await.unwrap();
 
