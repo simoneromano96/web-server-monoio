@@ -1,0 +1,5 @@
+rd_enabled = true
+fleet_id = "1adcf1d6-7885-4c8f-aedd-6779e5834f8e"
+
+[build]
+sccache = "/home/simone/.cargo/bin/sccache"

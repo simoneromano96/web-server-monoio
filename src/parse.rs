@@ -1,9 +1,8 @@
-use http_types::{
-    headers::{HeaderName, HeaderValues},
-    Headers, Method, Response, StatusCode,
-};
-use monoio::try_join;
-use std::str::FromStr;
+use http_types::Method;
+use rayon::prelude::*;
+use serde::Deserialize;
+use simd_json::from_str;
+use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -14,8 +13,18 @@ pub enum ParseRequestError {
     IncompleteRequest,
 }
 
-pub(crate) async fn parse_request(buffer: &[u8]) -> Result<(), ParseRequestError> {
-    let lines: Vec<Vec<u8>> = buffer
+#[derive(Debug)]
+pub struct ParsedRequest {
+    pub method: Method,
+    pub path: String,
+    pub version: String,
+    pub headers: Headers,
+    pub body: Vec<u8>,
+}
+
+pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, ParseRequestError> {
+    let mut lines: Vec<String> = Vec::with_capacity(buffer.len());
+    buffer
         .into_iter()
         // .filter(|&byte| *byte != b'\n')
         .fold(Vec::new(), |mut acc, byte| {
@@ -31,50 +40,64 @@ pub(crate) async fn parse_request(buffer: &[u8]) -> Result<(), ParseRequestError
                 }
                 _ => {
                     if let Some(acc) = acc.last_mut() {
-                        acc.push(*byte);
+                        acc.push(byte);
                     }
                 }
             };
             acc
-        });
+        })
+        .into_par_iter()
+        .map(|line| String::from_utf8_lossy(&line).to_string())
+        .collect_into_vec(&mut lines);
 
-    lines.iter().for_each(|line| {
-        println!("{line:?}");
-        println!("{:?}", String::from_utf8_lossy(&line));
-    });
+    let mut line_iter = lines.into_iter();
+    let protocol_line = line_iter
+        .next()
+        .ok_or(ParseRequestError::IncompleteRequest)?;
 
-    // let (method, path, version) = get_protocol(&lines)?;
-    // println!("{method} ___ {path} ___ {version}");
+    let HttpProtocol {
+        method,
+        path,
+        version,
+    } = get_protocol(&protocol_line)?;
+    let headers = parse_headers(&mut line_iter);
 
-    let (protocol,) = try_join!(get_protocol(&lines))?;
+    let body = line_iter
+        .map(|body_line| body_line.as_bytes().to_vec())
+        .flatten()
+        .collect();
 
-    let (method, path, version) = protocol;
-    println!("{method} ___ {path} ___ {version}");
-
-    Ok(())
+    Ok(ParsedRequest {
+        headers,
+        body,
+        method,
+        path,
+        version,
+    })
 }
 
-async fn get_protocol(lines: &Vec<Vec<u8>>) -> Result<(Method, String, String), ParseRequestError> {
-    let protocol = lines
-        .get(0)
-        .ok_or(ParseRequestError::IncompleteRequest)?
-        .iter()
-        .fold(Vec::new(), |mut acc, byte| {
-            if acc.is_empty() {
-                acc.push(Vec::new());
-            }
-            match byte {
-                b' ' => {
-                    acc.push(Vec::new());
-                }
-                _ => {
-                    if let Some(acc) = acc.last_mut() {
-                        acc.push(*byte);
-                    }
-                }
-            };
-            acc
-        });
+#[derive(Deserialize, Debug, PartialEq)]
+struct TestJsonBody {
+    test: String,
+    hello: String,
+}
+
+fn parse_json_body(body: &mut str) -> TestJsonBody {
+    println!("{body:#?}");
+    let value: TestJsonBody = from_str(body).unwrap();
+    println!("{value:#?}");
+    value
+}
+
+#[derive(Debug)]
+struct HttpProtocol {
+    method: Method,
+    path: String,
+    version: String,
+}
+
+fn get_protocol(line: &str) -> Result<HttpProtocol, ParseRequestError> {
+    let protocol: Vec<&str> = line.par_split(' ').collect();
 
     let (method, path, version) = (
         protocol
@@ -88,18 +111,31 @@ async fn get_protocol(lines: &Vec<Vec<u8>>) -> Result<(Method, String, String), 
             .ok_or(ParseRequestError::IncompleteRequest)?,
     );
 
-    let method = Method::from_str(&String::from_utf8_lossy(method))
-        .map_err(|_e| ParseRequestError::InvalidMethod)?;
-    let path = String::from_utf8_lossy(path);
-    let version = String::from_utf8_lossy(version);
+    let method = Method::from_str(method).map_err(|_e| ParseRequestError::InvalidMethod)?;
+    let path = path.to_string();
+    let version = version.to_string();
 
-    Ok((method, path.to_string(), version.to_string()))
+    Ok(HttpProtocol {
+        method,
+        path,
+        version,
+    })
 }
 
-// async fn parse_headers(lines: &Vec<Vec<u8>>) {
-//     let mut res = Response::new(StatusCode::Ok);
-//     let header_lines = lines
-//         .iter()
-//         .take_while(|line| line.is_empty())
-//         .for_each(|header| res.append_header(name, values));
-// }
+type Headers = HashMap<String, Vec<String>>;
+
+fn parse_headers(lines: &mut std::vec::IntoIter<String>) -> Headers {
+    lines
+        .take_while(|line| !line.is_empty())
+        .fold(HashMap::new(), |mut acc, header| {
+            let header: Vec<&str> = header.split(": ").collect();
+            if let (Some(header_key), Some(header_value)) = (header.get(0), header.get(1)) {
+                if let Some(header_values) = acc.get_mut(*header_key) {
+                    header_values.push(header_value.to_string());
+                } else {
+                    acc.insert(header_key.to_string(), vec![header_value.to_string()]);
+                }
+            };
+            acc
+        })
+}
