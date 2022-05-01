@@ -1,5 +1,5 @@
-#![feature(type_alias_impl_trait)]
 #![feature(fn_traits)]
+#![feature(into_future)]
 mod parse;
 use futures_util::future::BoxFuture;
 use http_types::Method;
@@ -11,29 +11,35 @@ use monoio::{
 use parse::ParsedRequest;
 use rayon::iter::IntoParallelRefIterator;
 
-use std::future::Future;
+use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 use std::{collections::HashMap, sync::Arc};
 
-type SyncHandler = Box<dyn Fn(ParsedRequest) -> Vec<u8>>;
-// existential type MyFuture: Future<Output = Vec<u8>>;
+// type SyncHandler = Box<dyn Fn(ParsedRequest) -> Vec<u8>>;
+type AsyncHandler = fn(ParsedRequest) -> BoxFuture<'static, Vec<u8>>;
+// Box<dyn Fn(ParsedRequest) -> dyn Future<Output = Vec<u8>>>;
 
-type AsyncHandler = Box<dyn Fn(ParsedRequest) -> BoxFuture<'static, Vec<u8>>>;
+type PathHandler = HashMap<String, AsyncHandler>;
 
-type PathHandler = HashMap<String, SyncHandler>;
-
-#[derive(Default)]
 struct Router {
     routes: HashMap<Method, PathHandler>,
+    not_found_handler: AsyncHandler,
 }
 
 impl Router {
+    pub fn new() -> Self {
+        Self {
+            routes: HashMap::new(),
+            not_found_handler: todo!(),
+        }
+    }
+
     pub fn add(
         &mut self,
         method: &Method,
         path: &str,
         // Pin<Box<dyn Future<Output=()> + 'a>>
-        handler: SyncHandler,
+        handler: AsyncHandler,
     ) {
         match self.routes.get_mut(method) {
             Some(path_map) => {
@@ -47,7 +53,10 @@ impl Router {
         }
     }
 
-    pub fn handle_route(&self, parsed_request: ParsedRequest) -> Result<Vec<u8>, ()> {
+    pub fn handle_route(
+        &self,
+        parsed_request: ParsedRequest,
+    ) -> Result<BoxFuture<'static, Vec<u8>>, ()> {
         let ParsedRequest { method, path, .. } = &parsed_request;
         let (_, handler) = self
             .routes
@@ -63,33 +72,38 @@ impl Router {
     }
 }
 
-// fn by_length() -> impl Fn(TcpStream) -> Pin<Box<dyn Future<Output = std::io::Result<()>>>> {
-//     move |stream| {
-//         Box::pin(async move {
-//             let response = b"HTTP/1.1 200 OK\r\n\r\n";
-//             let (res, _) = stream.write_all(response.to_vec()).await;
-//             res?;
-//             Ok(())
-//         })
-//     }
+async fn not_found_handler(stream: TcpWriteHalf<'_>) -> std::io::Result<()> {
+    let response = b"HTTP/1.1 404 NOT FOUND\r\n\r\n";
+    let (res, _) = stream.write_all(response).await;
+    res?;
+    Ok(())
+}
+
+async fn t(request: ParsedRequest) -> Vec<u8> {
+    b"HTTP/1.1 200 OK\r\n\r\n".to_vec()
+}
+
+fn async_handler<T>(request: ParsedRequest, f: T) -> BoxFuture<'static, Vec<u8>>
+where
+    T: (Fn(ParsedRequest) -> BoxFuture<'static, Vec<u8>>),
+{
+    Box::pin(f(request))
+}
+
+// fn sync_handler(request: ParsedRequest) -> Vec<u8> {
+//     b"HTTP/1.1 200 OK\r\n\r\n".to_vec()
 // }
-
-async fn async_handler(request: ParsedRequest) -> Vec<u8> {
-    b"HTTP/1.1 200 OK\r\n\r\n".to_vec()
-}
-
-fn sync_handler(request: ParsedRequest) -> Vec<u8> {
-    b"HTTP/1.1 200 OK\r\n\r\n".to_vec()
-}
 
 #[monoio::main]
 async fn main() {
     let listener = TcpListener::bind("0.0.0.0:3000").unwrap();
-    let mut router = Router::default();
+    let mut router = Router::new();
 
-    let h: SyncHandler = Box::new(sync_handler);
-    router.add(&Method::Get, "/test", h);
-    let _h2 = Box::new(async_handler);
+    // let h: SyncHandler = Box::new(sync_handler);
+    // router.add(&Method::Get, "/test", h);
+    let nf = not_found_handler;
+    let h2 = async_handler;
+    router.add(&Method::Get, "/test", h2);
 
     let router = Arc::new(router);
 
@@ -120,20 +134,6 @@ async fn main() {
     }
 }
 
-async fn test_handler(stream: TcpWriteHalf<'_>) -> std::io::Result<()> {
-    let response = b"HTTP/1.1 200 OK\r\n\r\n";
-    let (res, _) = stream.write_all(response).await;
-    res?;
-    Ok(())
-}
-
-async fn not_found_handler(stream: TcpWriteHalf<'_>) -> std::io::Result<()> {
-    let response = b"HTTP/1.1 404 NOT FOUND\r\n\r\n";
-    let (res, _) = stream.write_all(response).await;
-    res?;
-    Ok(())
-}
-
 async fn handle_tcp(router: Arc<Router>, mut stream: TcpStream) -> std::io::Result<()> {
     let mut buffer = Vec::with_capacity(8 * 1024);
 
@@ -151,7 +151,7 @@ async fn handle_tcp(router: Arc<Router>, mut stream: TcpStream) -> std::io::Resu
     buffer = _buf;
     // Parse request
     let request = parse::parse_request(buffer).await.unwrap();
-    let response = router.handle_route(request).unwrap();
+    let response = router.handle_route(request).unwrap().await;
     let (res, _) = write.write_all(response).await;
     res?;
     Ok(())
