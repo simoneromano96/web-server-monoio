@@ -1,13 +1,10 @@
-#![feature(fn_traits)]
-#![feature(into_future)]
 mod parse;
-use async_trait::async_trait;
-use futures_util::future::BoxFuture;
-use http_types::Method;
 
+use async_trait::async_trait;
+use http_types::Method;
 use monoio::{
     io::{AsyncReadRent, AsyncWriteRentExt},
-    net::{tcp::TcpWriteHalf, TcpListener, TcpStream},
+    net::{TcpListener, TcpStream},
 };
 use parse::ParsedRequest;
 
@@ -15,7 +12,7 @@ use std::future::Future;
 use std::{collections::HashMap, sync::Arc};
 
 // type SyncHandler = Box<dyn Fn(ParsedRequest) -> Vec<u8>>;
-type AsyncHandler = fn(ParsedRequest) -> BoxFuture<'static, Vec<u8>>;
+// type AsyncHandler = fn(ParsedRequest) -> BoxFuture<'static, Vec<u8>>;
 // Box<dyn Fn(ParsedRequest) -> dyn Future<Output = Vec<u8>>>;
 
 type PathHandler = HashMap<String, Box<dyn Endpoint>>;
