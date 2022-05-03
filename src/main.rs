@@ -49,6 +49,16 @@ async fn another_handler(_request: ParsedRequest) -> handler::HandlerResult {
     Ok(res)
 }
 
+async fn body_handler(mut request: ParsedRequest) -> handler::HandlerResult {
+    let body: TestJsonBody = simd_json::from_slice(&mut request.body).unwrap();
+    let mut res = Response::new(StatusCode::Ok);
+    res.set_version(Some(Version::Http1_1));
+    res.set_body(body);
+    res.set_content_type(http_types::mime::JSON);
+
+    Ok(res)
+}
+
 // fn sync_handler(request: ParsedRequest) -> Vec<u8> {
 //     b"HTTP/1.1 200 OK\r\n\r\n".to_vec()
 // }
@@ -62,6 +72,7 @@ async fn main() {
     // router.add(&Method::Get, "/test", h);
     router.add(&Method::Get, "/test", test_handler);
     router.add(&Method::Get, "/json", another_handler);
+    router.add(&Method::Post, "/json", body_handler);
 
     let router = Arc::new(router);
 
