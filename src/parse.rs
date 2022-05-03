@@ -1,9 +1,21 @@
 use http_types::Method;
-use rayon::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use simd_json::from_str;
 use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
+
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
+struct TestJsonBody {
+    test: String,
+    hello: String,
+}
+
+fn parse_json_body(body: &mut str) -> TestJsonBody {
+    println!("{body:#?}");
+    let value: TestJsonBody = from_str(body).unwrap();
+    println!("{value:#?}");
+    value
+}
 
 #[derive(Error, Debug)]
 pub enum ParseRequestError {
@@ -23,8 +35,7 @@ pub struct ParsedRequest {
 }
 
 pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, ParseRequestError> {
-    let mut lines: Vec<String> = Vec::with_capacity(buffer.len());
-    buffer
+    let lines: Vec<Vec<u8>> = buffer
         .into_iter()
         // .filter(|&byte| *byte != b'\n')
         .fold(Vec::new(), |mut acc, byte| {
@@ -45,12 +56,13 @@ pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, Pars
                 }
             };
             acc
-        })
-        .into_par_iter()
-        .map(|line| String::from_utf8_lossy(&line).to_string())
-        .collect_into_vec(&mut lines);
+        });
+    // .into_par_iter()
+    // .map(|line| String::from_utf8_lossy(&line).to_string())
+    // .collect_into_vec(&mut lines);
 
     let mut line_iter = lines.into_iter();
+
     let protocol_line = line_iter
         .next()
         .ok_or(ParseRequestError::IncompleteRequest)?;
@@ -59,13 +71,13 @@ pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, Pars
         method,
         path,
         version,
-    } = get_protocol(&protocol_line)?;
-    let headers = parse_headers(&mut line_iter);
+    } = get_protocol(protocol_line)?;
+    println!("Protocol parsed");
 
-    let body = line_iter
-        .map(|body_line| body_line.as_bytes().to_vec())
-        .flatten()
-        .collect();
+    let headers = parse_headers(&mut line_iter);
+    println!("Headers parsed");
+
+    let body = line_iter.flatten().collect();
 
     Ok(ParsedRequest {
         headers,
@@ -76,19 +88,6 @@ pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, Pars
     })
 }
 
-#[derive(Deserialize, Debug, PartialEq)]
-struct TestJsonBody {
-    test: String,
-    hello: String,
-}
-
-fn parse_json_body(body: &mut str) -> TestJsonBody {
-    println!("{body:#?}");
-    let value: TestJsonBody = from_str(body).unwrap();
-    println!("{value:#?}");
-    value
-}
-
 #[derive(Debug)]
 struct HttpProtocol {
     method: Method,
@@ -96,8 +95,9 @@ struct HttpProtocol {
     version: String,
 }
 
-fn get_protocol(line: &str) -> Result<HttpProtocol, ParseRequestError> {
-    let protocol: Vec<&str> = line.par_split(' ').collect();
+fn get_protocol(line: Vec<u8>) -> Result<HttpProtocol, ParseRequestError> {
+    let parsed_line = String::from_utf8_lossy(&line);
+    let protocol: Vec<&str> = parsed_line.split(' ').collect();
 
     let (method, path, version) = (
         protocol
@@ -124,11 +124,12 @@ fn get_protocol(line: &str) -> Result<HttpProtocol, ParseRequestError> {
 
 type Headers = HashMap<String, Vec<String>>;
 
-fn parse_headers(lines: &mut std::vec::IntoIter<String>) -> Headers {
+fn parse_headers(lines: &mut std::vec::IntoIter<Vec<u8>>) -> Headers {
     lines
         .take_while(|line| !line.is_empty())
         .fold(HashMap::new(), |mut acc, header| {
-            let header: Vec<&str> = header.split(": ").collect();
+            let parsed_line = String::from_utf8_lossy(&header);
+            let header: Vec<&str> = parsed_line.split(": ").collect();
             if let (Some(header_key), Some(header_value)) = (header.get(0), header.get(1)) {
                 if let Some(header_values) = acc.get_mut(*header_key) {
                     header_values.push(header_value.to_string());

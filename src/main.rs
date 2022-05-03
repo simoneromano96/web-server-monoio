@@ -1,101 +1,52 @@
+mod handler;
 mod parse;
+mod router;
 
-use async_trait::async_trait;
-use http_types::Method;
+use futures_util::AsyncReadExt;
+use handler::Handler;
+use http_types::{Body, Method, Mime, Response, StatusCode, Version};
 use monoio::{
     io::{AsyncReadRent, AsyncWriteRentExt},
     net::{TcpListener, TcpStream},
 };
 use parse::ParsedRequest;
+use serde::{Deserialize, Serialize};
+use simd_json::to_vec;
 
-use std::future::Future;
 use std::{collections::HashMap, sync::Arc};
 
-// type SyncHandler = Box<dyn Fn(ParsedRequest) -> Vec<u8>>;
-// type AsyncHandler = fn(ParsedRequest) -> BoxFuture<'static, Vec<u8>>;
-// Box<dyn Fn(ParsedRequest) -> dyn Future<Output = Vec<u8>>>;
+type PathHandler = HashMap<String, Box<dyn Handler>>;
 
-type PathHandler = HashMap<String, Box<dyn Endpoint>>;
-
-type Result = std::result::Result<Vec<u8>, ()>;
-
-#[async_trait]
-trait Endpoint: Send + Sync + 'static {
-    /// Invoke the endpoint within the given context
-    async fn call(&self, req: ParsedRequest) -> crate::Result;
+async fn test_handler(_request: ParsedRequest) -> handler::HandlerResult {
+    let mut res = Response::new(StatusCode::Ok);
+    res.set_version(Some(Version::Http1_1));
+    res.set_body("Hello, world!");
+    res.append_header("Content-Type", "text/plain");
+    Ok(res)
 }
 
-// type DynEndpoint = dyn Endpoint;
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
+struct TestJsonBody {
+    test: String,
+    hello: String,
+}
 
-#[async_trait]
-impl<F, Fut> Endpoint for F
-where
-    F: Send + Sync + 'static + Fn(ParsedRequest) -> Fut,
-    Fut: Future<Output = Result> + Send + 'static,
-{
-    async fn call(&self, req: ParsedRequest) -> crate::Result {
-        let fut = (self)(req);
-        let res = fut.await?;
-        Ok(res.into())
+impl Into<Body> for TestJsonBody {
+    fn into(self) -> Body {
+        simd_json::to_vec(&self).unwrap().into()
     }
 }
 
-struct Router {
-    routes: HashMap<Method, PathHandler>,
-    not_found_handler: Box<dyn Endpoint>,
-}
+async fn another_handler(_request: ParsedRequest) -> handler::HandlerResult {
+    let mut res = Response::new(StatusCode::Ok);
+    res.set_version(Some(Version::Http1_1));
+    res.set_body(TestJsonBody {
+        test: "Hello".to_string(),
+        hello: "This is test json body".to_string(),
+    });
+    res.set_content_type(http_types::mime::JSON);
 
-impl Router {
-    pub fn new() -> Self {
-        Self {
-            routes: HashMap::new(),
-            not_found_handler: Box::new(not_found_handler),
-        }
-    }
-
-    pub fn add<T>(
-        &mut self,
-        method: &Method,
-        path: &str,
-        // Pin<Box<dyn Future<Output=()> + 'a>>
-        handler: T,
-    ) where
-        T: Endpoint,
-    {
-        match self.routes.get_mut(method) {
-            Some(path_map) => {
-                path_map.insert(path.to_string(), Box::new(handler));
-            }
-            None => {
-                let mut path_map = PathHandler::new();
-                path_map.insert(path.to_string(), Box::new(handler));
-                self.routes.insert(*method, path_map);
-            }
-        }
-    }
-
-    pub async fn handle_route(&self, parsed_request: ParsedRequest) -> Result {
-        let ParsedRequest { method, path, .. } = &parsed_request;
-        let (_, handler) = self
-            .routes
-            .iter()
-            .find(|(routes_method, _routes)| *routes_method == method)
-            .ok_or(())?
-            .1
-            .iter()
-            .find(|(route_path, _handler)| *route_path == path)
-            .ok_or(())?;
-
-        handler.call(parsed_request).await
-    }
-}
-
-async fn not_found_handler(request: ParsedRequest) -> Result {
-    Ok(b"HTTP/1.1 404 NOT FOUND\r\n\r\n".to_vec())
-}
-
-async fn test_handler(request: ParsedRequest) -> Result {
-    Ok(b"HTTP/1.1 200 OK\r\n\r\n".to_vec())
+    Ok(res)
 }
 
 // fn sync_handler(request: ParsedRequest) -> Vec<u8> {
@@ -105,11 +56,12 @@ async fn test_handler(request: ParsedRequest) -> Result {
 #[monoio::main]
 async fn main() {
     let listener = TcpListener::bind("0.0.0.0:3000").unwrap();
-    let mut router = Router::new();
+    let mut router = router::Router::new();
 
     // let h: SyncHandler = Box::new(sync_handler);
     // router.add(&Method::Get, "/test", h);
     router.add(&Method::Get, "/test", test_handler);
+    router.add(&Method::Get, "/json", another_handler);
 
     let router = Arc::new(router);
 
@@ -140,7 +92,28 @@ async fn main() {
     }
 }
 
-async fn handle_tcp(router: Arc<Router>, mut stream: TcpStream) -> std::io::Result<()> {
+async fn response_to_buffer(response: &mut Response) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    let version = response.version().unwrap_or(Version::Http1_1).to_string();
+    let (status, canonical_reason) = (
+        response.status().to_string(),
+        response.status().canonical_reason(),
+    );
+
+    buffer.extend_from_slice(format!("{version} {status} {canonical_reason}\r\n").as_bytes());
+    response.iter().for_each(|(header_name, header_values)| {
+        header_values.iter().for_each(|header_value| {
+            buffer.extend_from_slice(format!("{header_name}: {header_value}\r\n").as_bytes());
+        });
+    });
+    if let Ok(body) = response.body_bytes().await {
+        buffer.extend_from_slice(b"\r\n");
+        buffer.extend_from_slice(&body);
+    }
+    buffer
+}
+
+async fn handle_tcp(router: Arc<router::Router>, mut stream: TcpStream) -> std::io::Result<()> {
     let mut buffer = Vec::with_capacity(8 * 1024);
 
     // Split stream into two components
@@ -157,8 +130,11 @@ async fn handle_tcp(router: Arc<Router>, mut stream: TcpStream) -> std::io::Resu
     buffer = _buf;
     // Parse request
     let request = parse::parse_request(buffer).await.unwrap();
-    let response = router.handle_route(request).await.unwrap();
-    let (res, _) = write.write_all(response).await;
+
+    let mut response = router.handle_route(request).await.unwrap();
+    let buffer = response_to_buffer(&mut response).await;
+
+    let (res, _) = write.write_all(buffer).await;
     res?;
     Ok(())
 

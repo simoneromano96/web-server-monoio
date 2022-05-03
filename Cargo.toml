@@ -10,6 +10,7 @@ edition = "2021"
 monoio = { version = "0.0.4" }
 # async-h1 = { version = "2.3.3" }
 httparse = { version = "1.7.0" }
+http = "0.2.7"
 http-types = "2.12.0"
 # Benchmark all these
 fnv = "1.0.7"
