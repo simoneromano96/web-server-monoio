@@ -1,108 +1,60 @@
 mod handler;
+mod handler_examples;
 mod parse;
 mod router;
 
-use futures_util::AsyncReadExt;
-use handler::Handler;
-use http_types::{Body, Method, Mime, Response, StatusCode, Version};
+use http_types::{Method, Response, Version};
 use monoio::{
     io::{AsyncReadRent, AsyncWriteRentExt},
     net::{TcpListener, TcpStream},
 };
-use parse::ParsedRequest;
-use serde::{Deserialize, Serialize};
-use simd_json::to_vec;
+use tracing::{error, info, instrument, Level};
+use tracing_subscriber::FmtSubscriber;
 
-use std::{collections::HashMap, sync::Arc};
-
-type PathHandler = HashMap<String, Box<dyn Handler>>;
-
-async fn test_handler(_request: ParsedRequest) -> handler::HandlerResult {
-    let mut res = Response::new(StatusCode::Ok);
-    res.set_version(Some(Version::Http1_1));
-    res.set_body("Hello, world!");
-    res.append_header("Content-Type", "text/plain");
-    Ok(res)
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
-struct TestJsonBody {
-    test: String,
-    hello: String,
-}
-
-impl Into<Body> for TestJsonBody {
-    fn into(self) -> Body {
-        simd_json::to_vec(&self).unwrap().into()
-    }
-}
-
-async fn another_handler(_request: ParsedRequest) -> handler::HandlerResult {
-    let mut res = Response::new(StatusCode::Ok);
-    res.set_version(Some(Version::Http1_1));
-    res.set_body(TestJsonBody {
-        test: "Hello".to_string(),
-        hello: "This is test json body".to_string(),
-    });
-    res.set_content_type(http_types::mime::JSON);
-
-    Ok(res)
-}
-
-async fn body_handler(mut request: ParsedRequest) -> handler::HandlerResult {
-    let body: TestJsonBody = simd_json::from_slice(&mut request.body).unwrap();
-    let mut res = Response::new(StatusCode::Ok);
-    res.set_version(Some(Version::Http1_1));
-    res.set_body(body);
-    res.set_content_type(http_types::mime::JSON);
-
-    Ok(res)
-}
-
-// fn sync_handler(request: ParsedRequest) -> Vec<u8> {
-//     b"HTTP/1.1 200 OK\r\n\r\n".to_vec()
-// }
+use std::sync::Arc;
 
 #[monoio::main]
 async fn main() {
+    // a builder for `FmtSubscriber`.
+    let subscriber = FmtSubscriber::builder()
+        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
+        // will be written to stdout.
+        .with_max_level(Level::TRACE)
+        // completes the builder.
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
     let listener = TcpListener::bind("0.0.0.0:3000").unwrap();
     let mut router = router::Router::new();
 
-    // let h: SyncHandler = Box::new(sync_handler);
-    // router.add(&Method::Get, "/test", h);
-    router.add(&Method::Get, "/test", test_handler);
-    router.add(&Method::Get, "/json", another_handler);
-    router.add(&Method::Post, "/json", body_handler);
+    router.add(&Method::Get, "/test", handler_examples::test_handler);
+    router.add(&Method::Get, "/json", handler_examples::another_handler);
+    router.add(&Method::Post, "/json", handler_examples::body_handler);
 
     let router = Arc::new(router);
 
-    // fn add(x: i32, y: i32) -> i32 {
-    //     x + y
-    // }
-    // let mut x = add(5, 7);
-    // type Binop = fn(i32, i32) -> i32;
-    // let bo: Binop = add;
-    // x = bo(5, 7);
+    info!("Listening on {:?}", listener.local_addr());
 
-    println!("listening");
     loop {
         let incoming = listener.accept().await;
         match incoming {
             Ok((stream, addr)) => {
-                println!("accepted a connection from {}", addr);
+                info!("accepted a connection from {}", addr);
                 // let handler = Box::new(actual_handler);
                 // let h2: AsyncHandler = |stream| Box::pin(test_handler(stream));
 
                 monoio::spawn(handle_tcp(router.clone(), stream));
             }
             Err(e) => {
-                println!("accepted connection failed: {}", e);
+                error!("accepted connection failed: {}", e);
                 return;
             }
         }
     }
 }
 
+#[instrument]
 async fn response_to_buffer(response: &mut Response) -> Vec<u8> {
     let mut buffer = Vec::new();
     let version = response.version().unwrap_or(Version::Http1_1).to_string();
@@ -147,22 +99,6 @@ async fn handle_tcp(router: Arc<router::Router>, mut stream: TcpStream) -> std::
 
     let (res, _) = write.write_all(buffer).await;
     res?;
+    info!("Served request");
     Ok(())
-
-    // match request {
-    //     ParsedRequest {
-    //         method: Method::Get,
-    //         ..
-    //     } => test_handler(write).await,
-    //     _ => not_found_handler(write).await,
-    // }
-    // match req {
-    //     Request {
-    //         method: Some("GET"),
-    //         path: Some("/test"),
-    //         ..
-    //     } => test_handler(write).await,
-    //     _ => not_found_handler(write).await,
-    // }
-    // Ok(())
 }

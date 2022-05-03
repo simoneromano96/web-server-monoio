@@ -1,11 +1,16 @@
 use crate::handler::{self, Handler};
 use crate::parse::ParsedRequest;
-
-use super::PathHandler;
-
 use http_types::{Method, Response, StatusCode, Version};
-
 use std::collections::HashMap;
+use thiserror::Error;
+
+type PathHandler = HashMap<String, Box<dyn Handler>>;
+
+#[derive(Debug, Error)]
+enum RouterError {
+    #[error("Handler not found")]
+    HandlerNotFound,
+}
 
 async fn default_not_found_handler(_request: ParsedRequest) -> handler::HandlerResult {
     let mut res = Response::new(StatusCode::NotFound);
@@ -50,16 +55,28 @@ impl Router {
 
     pub async fn handle_route(&self, parsed_request: ParsedRequest) -> handler::HandlerResult {
         let ParsedRequest { method, path, .. } = &parsed_request;
+        let handler = self
+            .resolve_handler(method, path)
+            .unwrap_or(&self.not_found_handler);
+
+        handler.call(parsed_request).await
+    }
+
+    fn resolve_handler(
+        &self,
+        method: &Method,
+        path: &str,
+    ) -> Result<&Box<dyn Handler>, RouterError> {
         let (_, handler) = self
             .routes
             .iter()
             .find(|(routes_method, _routes)| *routes_method == method)
-            .ok_or(())?
+            .ok_or(RouterError::HandlerNotFound)?
             .1
             .iter()
             .find(|(route_path, _handler)| *route_path == path)
-            .ok_or(())?;
+            .ok_or(RouterError::HandlerNotFound)?;
 
-        handler.call(parsed_request).await
+        Ok(handler)
     }
 }

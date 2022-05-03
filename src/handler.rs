@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use http_types::Response;
 use std::future::Future;
 
-pub type HandlerResult = Result<Response, ()>;
+pub type HandlerResult = Result<Response, Response>;
 
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {

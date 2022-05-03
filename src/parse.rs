@@ -1,21 +1,7 @@
 use http_types::Method;
-use serde::{Deserialize, Serialize};
-use simd_json::from_str;
 use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
-
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
-struct TestJsonBody {
-    test: String,
-    hello: String,
-}
-
-fn parse_json_body(body: &mut str) -> TestJsonBody {
-    println!("{body:#?}");
-    let value: TestJsonBody = from_str(body).unwrap();
-    println!("{value:#?}");
-    value
-}
+use tracing::trace;
 
 #[derive(Error, Debug)]
 pub enum ParseRequestError {
@@ -35,6 +21,8 @@ pub struct ParsedRequest {
 }
 
 pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, ParseRequestError> {
+    trace!("Parsing request");
+
     let lines: Vec<Vec<u8>> = buffer
         .into_iter()
         // .filter(|&byte| *byte != b'\n')
@@ -72,12 +60,12 @@ pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, Pars
         path,
         version,
     } = get_protocol(protocol_line)?;
-    println!("Protocol parsed");
 
     let headers = parse_headers(&mut line_iter);
-    println!("Headers parsed");
 
     let body = line_iter.flatten().collect();
+
+    trace!("Parsed request successfully");
 
     Ok(ParsedRequest {
         headers,
@@ -114,6 +102,13 @@ fn get_protocol(line: Vec<u8>) -> Result<HttpProtocol, ParseRequestError> {
     let method = Method::from_str(method).map_err(|_e| ParseRequestError::InvalidMethod)?;
     let path = path.to_string();
     let version = version.to_string();
+
+    trace!(
+        "Parsed request protocol; version = {:?} method = {:?} path = {:?}",
+        &version,
+        &method,
+        &path
+    );
 
     Ok(HttpProtocol {
         method,
