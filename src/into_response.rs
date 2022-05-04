@@ -1,6 +1,6 @@
 use crate::response_builder::ResponseBuilder;
 
-use http_types::{Body, Response};
+use http_types::Response;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -19,7 +19,7 @@ where
     T: serde::Serialize,
 {
     fn as_response(&self) -> Result<Response, SerializeError> {
-        let body: Body = simd_json::to_vec(&self)?.into();
+        let body = simd_json::to_vec(&self)?;
         Ok(ResponseBuilder::json(body).build())
     }
 }
