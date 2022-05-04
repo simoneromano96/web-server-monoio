@@ -1,4 +1,5 @@
-use crate::{parse::ParsedRequest, SerializeError};
+use crate::{into_response::SerializeError, parse::ParsedRequest};
+
 use async_trait::async_trait;
 use http_types::Response;
 use std::future::Future;

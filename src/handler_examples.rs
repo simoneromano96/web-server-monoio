@@ -1,6 +1,8 @@
 use crate::handler::HandlerResult;
+use crate::into_response::IntoResponse;
 use crate::parse::ParsedRequest;
-use crate::{IntoResponse, ResponseBuilder};
+use crate::response_builder;
+
 use http_types;
 use http_types::{Body, Response, StatusCode, Version};
 use serde::{Deserialize, Serialize};
@@ -52,7 +54,7 @@ pub async fn response_builder(_request: ParsedRequest) -> HandlerResult {
         test: "Hello".to_string(),
         hello: "This is test json body".to_string(),
     };
-    Ok(ResponseBuilder::json(body).build())
+    Ok(response_builder::ResponseBuilder::json(body).build())
 }
 
 pub async fn response_builder_trait(_request: ParsedRequest) -> HandlerResult {
@@ -60,5 +62,5 @@ pub async fn response_builder_trait(_request: ParsedRequest) -> HandlerResult {
         test: "Hello".to_string(),
         hello: "This is test json body".to_string(),
     };
-    Ok(body.response()?)
+    Ok(body.as_response()?)
 }

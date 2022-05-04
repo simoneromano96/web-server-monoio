@@ -1,5 +1,7 @@
 use crate::handler::{self, Handler};
 use crate::parse::ParsedRequest;
+use crate::response_builder::ResponseBuilder;
+
 use http_types::{Method, Response, StatusCode, Version};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -19,9 +21,14 @@ async fn default_not_found_handler(_request: ParsedRequest) -> handler::HandlerR
     Ok(res)
 }
 
+async fn default_error_handler(_request: ParsedRequest) -> handler::HandlerResult {
+    Ok(ResponseBuilder::internal_server_error().build())
+}
+
 pub struct Router {
     routes: HashMap<Method, PathHandler>,
     not_found_handler: Box<dyn Handler>,
+    error_handler: Box<dyn Handler>,
 }
 
 impl Router {
@@ -29,6 +36,7 @@ impl Router {
         Self {
             routes: HashMap::new(),
             not_found_handler: Box::new(default_not_found_handler),
+            error_handler: Box::new(default_error_handler),
         }
     }
 

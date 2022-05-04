@@ -45,9 +45,6 @@ pub(crate) async fn parse_request(buffer: Vec<u8>) -> Result<ParsedRequest, Pars
             };
             acc
         });
-    // .into_par_iter()
-    // .map(|line| String::from_utf8_lossy(&line).to_string())
-    // .collect_into_vec(&mut lines);
 
     let mut line_iter = lines.into_iter();
 

@@ -1,69 +1,19 @@
 mod handler;
 mod handler_examples;
+mod into_response;
 mod parse;
+mod response_builder;
 mod router;
 
-use http_types::{mime, Body, Method, Response, StatusCode, Version};
+use http_types::{Method, Response, Version};
 use monoio::{
     io::{AsyncReadRent, AsyncWriteRentExt},
     net::{TcpListener, TcpStream},
 };
-use thiserror::Error;
 use tracing::{error, info, instrument, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use std::sync::Arc;
-
-pub struct ResponseBuilder {
-    response: Response,
-}
-
-impl Default for ResponseBuilder {
-    fn default() -> Self {
-        let mut response = Response::new(StatusCode::Ok);
-        response.set_version(Some(Version::Http1_1));
-        Self { response }
-    }
-}
-
-impl ResponseBuilder {
-    fn inner_response(&mut self) -> &mut Response {
-        &mut self.response
-    }
-
-    pub fn json<T: Into<Body>>(body: T) -> Self {
-        let mut response = Self::default();
-        response.response.set_body(body);
-        response.response.set_content_type(mime::JSON);
-        response
-    }
-
-    pub fn build(self) -> Response {
-        self.response
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum SerializeError {
-    #[error("Received an unserializable body {0}")]
-    UnserializableBody(#[from] simd_json::Error),
-}
-
-trait IntoResponse {
-    fn response(&self) -> Result<Response, SerializeError>;
-}
-
-// impl IntoResponse for dyn serde::Serialize {}
-
-impl<T> IntoResponse for T
-where
-    T: serde::Serialize,
-{
-    fn response(&self) -> Result<Response, SerializeError> {
-        let body: Body = simd_json::to_vec(&self)?.into();
-        Ok(ResponseBuilder::json(body).build())
-    }
-}
 
 #[monoio::main]
 async fn main() {
@@ -116,6 +66,7 @@ async fn main() {
     }
 }
 
+/// Creates a byte array from a response object
 #[instrument]
 async fn response_to_buffer(response: &mut Response) -> Vec<u8> {
     let mut buffer = Vec::new();
