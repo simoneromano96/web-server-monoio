@@ -1,9 +1,16 @@
-use crate::parse::ParsedRequest;
+use crate::{parse::ParsedRequest, SerializeError};
 use async_trait::async_trait;
 use http_types::Response;
 use std::future::Future;
+use thiserror::Error;
 
-pub type HandlerResult = Result<Response, Response>;
+#[derive(Debug, Error)]
+pub enum HandlerError {
+    #[error("Serialization error {0}")]
+    SerializationError(#[from] SerializeError),
+}
+
+pub type HandlerResult = Result<Response, HandlerError>;
 
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {

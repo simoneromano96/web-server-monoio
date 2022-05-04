@@ -1,13 +1,11 @@
 use crate::handler::HandlerResult;
 use crate::parse::ParsedRequest;
+use crate::{IntoResponse, ResponseBuilder};
 use http_types;
-use http_types::Body;
-use http_types::Response;
-use http_types::StatusCode;
-use http_types::Version;
+use http_types::{Body, Response, StatusCode, Version};
 use serde::{Deserialize, Serialize};
 
-pub(crate) async fn test_handler(_request: ParsedRequest) -> HandlerResult {
+pub async fn test_handler(_request: ParsedRequest) -> HandlerResult {
     let mut res = Response::new(StatusCode::Ok);
     res.set_version(Some(Version::Http1_1));
     res.set_body("Hello, world!");
@@ -17,8 +15,8 @@ pub(crate) async fn test_handler(_request: ParsedRequest) -> HandlerResult {
 
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 struct TestJsonBody {
-    pub(crate) test: String,
-    pub(crate) hello: String,
+    pub test: String,
+    pub hello: String,
 }
 
 impl Into<Body> for TestJsonBody {
@@ -27,7 +25,7 @@ impl Into<Body> for TestJsonBody {
     }
 }
 
-pub(crate) async fn another_handler(_request: ParsedRequest) -> HandlerResult {
+pub async fn another_handler(_request: ParsedRequest) -> HandlerResult {
     let mut res = Response::new(StatusCode::Ok);
     res.set_version(Some(Version::Http1_1));
     res.set_body(TestJsonBody {
@@ -39,7 +37,7 @@ pub(crate) async fn another_handler(_request: ParsedRequest) -> HandlerResult {
     Ok(res)
 }
 
-pub(crate) async fn body_handler(mut request: ParsedRequest) -> HandlerResult {
+pub async fn body_handler(mut request: ParsedRequest) -> HandlerResult {
     let body: TestJsonBody = simd_json::from_slice(&mut request.body).unwrap();
     let mut res = Response::new(StatusCode::Ok);
     res.set_version(Some(Version::Http1_1));
@@ -47,4 +45,20 @@ pub(crate) async fn body_handler(mut request: ParsedRequest) -> HandlerResult {
     res.set_content_type(http_types::mime::JSON);
 
     Ok(res)
+}
+
+pub async fn response_builder(_request: ParsedRequest) -> HandlerResult {
+    let body = TestJsonBody {
+        test: "Hello".to_string(),
+        hello: "This is test json body".to_string(),
+    };
+    Ok(ResponseBuilder::json(body).build())
+}
+
+pub async fn response_builder_trait(_request: ParsedRequest) -> HandlerResult {
+    let body = TestJsonBody {
+        test: "Hello".to_string(),
+        hello: "This is test json body".to_string(),
+    };
+    Ok(body.response()?)
 }

@@ -8,12 +8,13 @@ use monoio::{
     io::{AsyncReadRent, AsyncWriteRentExt},
     net::{TcpListener, TcpStream},
 };
+use thiserror::Error;
 use tracing::{error, info, instrument, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use std::sync::Arc;
 
-struct ResponseBuilder {
+pub struct ResponseBuilder {
     response: Response,
 }
 
@@ -29,11 +30,38 @@ impl ResponseBuilder {
     fn inner_response(&mut self) -> &mut Response {
         &mut self.response
     }
+
     pub fn json<T: Into<Body>>(body: T) -> Self {
         let mut response = Self::default();
         response.response.set_body(body);
         response.response.set_content_type(mime::JSON);
         response
+    }
+
+    pub fn build(self) -> Response {
+        self.response
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum SerializeError {
+    #[error("Received an unserializable body {0}")]
+    UnserializableBody(#[from] simd_json::Error),
+}
+
+trait IntoResponse {
+    fn response(&self) -> Result<Response, SerializeError>;
+}
+
+// impl IntoResponse for dyn serde::Serialize {}
+
+impl<T> IntoResponse for T
+where
+    T: serde::Serialize,
+{
+    fn response(&self) -> Result<Response, SerializeError> {
+        let body: Body = simd_json::to_vec(&self)?.into();
+        Ok(ResponseBuilder::json(body).build())
     }
 }
 
@@ -55,6 +83,16 @@ async fn main() {
     router.add(&Method::Get, "/test", handler_examples::test_handler);
     router.add(&Method::Get, "/json", handler_examples::another_handler);
     router.add(&Method::Post, "/json", handler_examples::body_handler);
+    router.add(
+        &Method::Get,
+        "/json-builder",
+        handler_examples::response_builder,
+    );
+    router.add(
+        &Method::Get,
+        "/json-builder-trait",
+        handler_examples::response_builder_trait,
+    );
 
     let router = Arc::new(router);
 
