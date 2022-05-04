@@ -3,7 +3,7 @@ mod handler_examples;
 mod parse;
 mod router;
 
-use http_types::{Method, Response, Version};
+use http_types::{mime, Body, Method, Response, StatusCode, Version};
 use monoio::{
     io::{AsyncReadRent, AsyncWriteRentExt},
     net::{TcpListener, TcpStream},
@@ -12,6 +12,30 @@ use tracing::{error, info, instrument, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use std::sync::Arc;
+
+struct ResponseBuilder {
+    response: Response,
+}
+
+impl Default for ResponseBuilder {
+    fn default() -> Self {
+        let mut response = Response::new(StatusCode::Ok);
+        response.set_version(Some(Version::Http1_1));
+        Self { response }
+    }
+}
+
+impl ResponseBuilder {
+    fn inner_response(&mut self) -> &mut Response {
+        &mut self.response
+    }
+    pub fn json<T: Into<Body>>(body: T) -> Self {
+        let mut response = Self::default();
+        response.response.set_body(body);
+        response.response.set_content_type(mime::JSON);
+        response
+    }
+}
 
 #[monoio::main]
 async fn main() {
